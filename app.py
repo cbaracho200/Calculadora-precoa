@@ -2,85 +2,182 @@ import streamlit as st
 import requests
 from datetime import datetime
 import os
-from dotenv import load_dotenv
 
-# Load environment variables
-load_dotenv()
+# Configurações iniciais e constantes
+API_KEY = st.secrets["OPENEXCHANGERATES_API_KEY"]
 
-# Custom CSS for better styling
-def load_css():
+# Definição dos estilos em uma função separada
+def local_css():
     st.markdown("""
         <style>
-        .main {
-            padding: 2rem;
-        }
+        /* Estilos para containers principais */
         .stApp {
-            background-color: #f8f9fa;
-        }
-        .css-1d391kg {
-            padding: 2rem 1rem;
-        }
-        .stMetricValue {
-            background-color: #ffffff;
+            max-width: 100%;
             padding: 1rem;
-            border-radius: 0.5rem;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
         }
-        .market-status {
+        
+        /* Estilos para cartões/métricas */
+        div.css-1r6slb0.e1tzin5v2 {
+            background-color: #FFFFFF;
+            border: 1px solid #EEEEEE;
+            padding: 1.5rem;
+            border-radius: 10px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+        
+        /* Estilização dos botões */
+        .stButton > button {
+            width: 100%;
+            background-color: #3498db;
+            color: white;
+            border: none;
             padding: 0.5rem 1rem;
-            border-radius: 0.25rem;
-            font-weight: bold;
+            border-radius: 5px;
+            font-weight: 500;
         }
+        
+        .stButton > button:hover {
+            background-color: #2980b9;
+        }
+        
+        /* Estilos para status do mercado */
+        .market-status {
+            padding: 8px 16px;
+            border-radius: 5px;
+            font-weight: 500;
+            text-align: center;
+            margin: 10px 0;
+        }
+        
         .market-open {
             background-color: #d4edda;
             color: #155724;
+            border: 1px solid #c3e6cb;
         }
+        
         .market-closed {
             background-color: #f8d7da;
             color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        
+        /* Estilos para inputs */
+        .stNumberInput {
+            margin-bottom: 1rem;
+        }
+        
+        /* Estilos para títulos */
+        h1, h2, h3 {
+            color: #2c3e50;
+            margin-bottom: 1rem;
+        }
+        
+        /* Estilos para mensagens de erro/sucesso */
+        .stAlert {
+            padding: 1rem;
+            border-radius: 5px;
+            margin: 1rem 0;
+        }
+        
+        /* Footer personalizado */
+        .footer {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            background-color: #f8f9fa;
+            padding: 1rem;
+            text-align: center;
+            border-top: 1px solid #dee2e6;
+        }
+        
+        /* Responsividade */
+        @media (max-width: 768px) {
+            .stApp {
+                padding: 0.5rem;
+            }
+            
+            div.css-1r6slb0.e1tzin5v2 {
+                padding: 1rem;
+            }
         }
         </style>
-    """)
+    """, unsafe_allow_html=True)
 
 def obter_cotacao(par_moedas):
-    """Obtém cotação da API usando a chave armazenada em variável de ambiente"""
-    api_key = os.getenv('OPENEXCHANGERATES_API_KEY')
-    if not api_key:
-        raise ValueError("API Key não encontrada nas variáveis de ambiente")
+    """
+    Obtém cotação da API usando a chave armazenada nos secrets do Streamlit
+    """
+    try:
+        base, quote = par_moedas.split('/')
+        url = 'https://openexchangerates.org/api/latest.json'
+        params = {
+            'app_id': API_KEY,
+            'base': 'USD',  # A versão gratuita só permite USD como base
+            'symbols': f"{quote}"
+        }
+
+        response = requests.get(url, params=params)
         
-    base, quote = par_moedas.split('/')
-    url = 'https://openexchangerates.org/api/latest.json'
-    params = {
-        'app_id': api_key,
-        'symbols': f"{base},{quote}"
-    }
+        if response.status_code != 200:
+            st.error(f"Erro na API: {response.status_code} - {response.text}")
+            return None
 
-    response = requests.get(url, params=params)
-    if response.status_code != 200:
-        raise ValueError("Erro ao obter a cotação. Verifique sua API Key e a conexão com a internet.")
+        data = response.json()
+        
+        # Se estamos convertendo de/para USD
+        if base == 'USD':
+            return data['rates'][quote]
+        elif quote == 'USD':
+            return 1 / data['rates'][base]
+        else:
+            # Para outros pares, precisamos fazer conversão cruzada
+            usd_to_quote = data['rates'][quote]
+            usd_to_base = data['rates'][base]
+            return usd_to_quote / usd_to_base
 
-    data = response.json()
-    if 'rates' not in data or base not in data['rates'] or quote not in data['rates']:
-        raise ValueError(f"Cotações para {par_moedas} não encontradas.")
-
-    return data['rates'][quote] / data['rates'][base]
+    except Exception as e:
+        st.error(f"Erro ao obter cotação: {str(e)}")
+        return None
 
 def calcular_lote_e_risco(risco_brl, par_moedas, pips):
-    taxa_brl_usd = obter_cotacao('USD/BRL')
-    risco_usd = risco_brl / taxa_brl_usd
-    taxa_cambio = obter_cotacao(par_moedas)
-    tamanho_lote = risco_usd / (pips / taxa_cambio)
-    return tamanho_lote, risco_usd
+    """
+    Calcula o tamanho do lote e o risco com tratamento de erros melhorado
+    """
+    try:
+        # Primeiro obtemos USD/BRL
+        taxa_brl_usd = obter_cotacao('USD/BRL')
+        if not taxa_brl_usd:
+            return None, None
+
+        risco_usd = risco_brl / taxa_brl_usd
+        
+        # Depois obtemos a cotação do par desejado
+        taxa_cambio = obter_cotacao(par_moedas)
+        if not taxa_cambio:
+            return None, None
+
+        # Cálculo do tamanho do lote
+        tamanho_lote = risco_usd / (pips / taxa_cambio)
+        
+        return tamanho_lote, risco_usd
+
+    except Exception as e:
+        st.error(f"Erro no cálculo: {str(e)}")
+        return None, None
 
 def is_market_open():
+    """
+    Verifica se o mercado Forex está aberto
+    """
     now = datetime.utcnow()
-    if now.weekday() >= 5:  # Saturday or Sunday
+    if now.weekday() >= 5:  # Sábado ou Domingo
         return False
     hour = now.hour
-    return 22 <= hour <= 23 or 0 <= hour < 21
+    return 21 <= hour <= 23 or 0 <= hour < 20  # Horário de mercado em UTC
 
 def main():
-    # Page Configuration
+    # Configuração da página
     st.set_page_config(
         page_title="Calculadora Forex Pro",
         page_icon="💱",
@@ -88,25 +185,24 @@ def main():
         initial_sidebar_state="expanded"
     )
 
-    # Load custom CSS
-    load_css()
+    # Carrega os estilos CSS
+    local_css()
 
-    # Header Section
+    # Cabeçalho
     st.title("💱 Calculadora Forex Profissional")
-    st.markdown("---")
-
-    # Market Status Indicator
+    
+    # Status do Mercado
     market_status = is_market_open()
-    status_col1, status_col2 = st.columns([3, 1])
-    with status_col1:
-        st.markdown("### Análise de Risco e Dimensionamento de Posição")
-    with status_col2:
-        if market_status:
-            st.markdown('<p class="market-status market-open">Mercado Aberto</p>', unsafe_allow_html=True)
-        else:
-            st.markdown('<p class="market-status market-closed">Mercado Fechado</p>', unsafe_allow_html=True)
+    status_text = "MERCADO ABERTO" if market_status else "MERCADO FECHADO"
+    status_class = "market-open" if market_status else "market-closed"
+    
+    st.markdown(f"""
+        <div class="market-status {status_class}">
+            {status_text}
+        </div>
+    """, unsafe_allow_html=True)
 
-    # Main Layout
+    # Layout Principal
     col1, col2 = st.columns([1, 2])
 
     with col1:
@@ -120,7 +216,11 @@ def main():
             help="Defina o valor máximo que está disposto a arriscar em Reais"
         )
 
-        pares_disponiveis = ["EUR/USD", "GBP/USD", "USD/JPY", "USD/BRL", "EUR/BRL"]
+        pares_disponiveis = [
+            "EUR/USD", "GBP/USD", "USD/JPY", "USD/BRL", "EUR/BRL",
+            "GBP/BRL", "AUD/USD", "USD/CAD", "USD/CHF"
+        ]
+        
         par_moedas = st.selectbox(
             "Par de Moedas 🔄",
             options=pares_disponiveis,
@@ -135,57 +235,54 @@ def main():
             help="Digite o tamanho do seu stop loss em pips"
         )
 
-        calcular = st.button("Calcular Posição 🎯", use_container_width=True)
+        calcular = st.button("Calcular Posição 🎯")
 
     with col2:
         st.markdown("### Resultados da Análise")
         
         if calcular:
-            try:
-                with st.spinner('Calculando...'):
-                    pips_adjusted = pips * 1.20
-                    tamanho_lote, risco_usd = calcular_lote_e_risco(risco_brl, par_moedas, pips_adjusted)
-
-                    metrics_col1, metrics_col2, metrics_col3 = st.columns(3)
+            with st.spinner('Calculando posição...'):
+                pips_adjusted = pips * 1.20  # Ajuste de 20% para segurança
+                resultado = calcular_lote_e_risco(risco_brl, par_moedas, pips_adjusted)
+                
+                if resultado and None not in resultado:
+                    tamanho_lote, risco_usd = resultado
                     
-                    with metrics_col1:
+                    col1, col2, col3 = st.columns(3)
+                    
+                    with col1:
                         st.metric(
                             "Tamanho do Lote",
                             f"{tamanho_lote:.2f}",
-                            "Lote Padrão"
+                            "Lotes"
                         )
                     
-                    with metrics_col2:
+                    with col2:
                         st.metric(
                             "Risco em USD",
                             f"${risco_usd:.2f}",
-                            "Valor em Dólar"
+                            "USD"
                         )
                     
-                    with metrics_col3:
+                    with col3:
                         st.metric(
                             "Risco em BRL",
                             f"R${risco_brl:.2f}",
-                            "Valor em Real"
+                            "BRL"
                         )
-
-                    st.success("✅ Cálculos realizados com sucesso!")
                     
-            except Exception as e:
-                st.error(f"❌ Erro no cálculo: {str(e)}")
+                    st.success("✅ Cálculos realizados com sucesso!")
+                else:
+                    st.error("❌ Não foi possível realizar os cálculos. Verifique os dados inseridos.")
         else:
-            st.info("👈 Configure os parâmetros e clique em 'Calcular Posição' para ver os resultados")
+            st.info("👈 Configure os parâmetros e clique em 'Calcular Posição'")
 
     # Footer
-    st.markdown("---")
-    st.markdown(
-        """
-        <div style='text-align: center; color: #666;'>
-            <small>Desenvolvido para Traders Profissionais • Atualizado em tempo real • Dados de mercado via OpenExchangeRates</small>
+    st.markdown("""
+        <div class='footer'>
+            <small>Desenvolvido para Traders Profissionais • Dados em Tempo Real • v1.0.0</small>
         </div>
-        """,
-        unsafe_allow_html=True
-    )
+    """, unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
