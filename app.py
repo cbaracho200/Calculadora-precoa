@@ -224,14 +224,15 @@ def main():
         
         # Input de pips com slider e campo numérico
         st.markdown("### 📏 Stop Loss")
-        pips = st.slider(
-            "Quantidade de pips",
-            min_value=0.0,
-            max_value=200.0,
-            value=50.0,
-            step=0.1,
-            help="Arraste para ajustar ou digite o valor"
-        )
+        pips = st.number_input("Quantidade de pips", value=None, placeholder="number...")
+       # pips = st.slider(
+       #     "Quantidade de pips",
+       #     min_value=0.0,
+       #     max_value=200.0,
+       #     value=50.0,
+       #     step=0.1,
+       #     help="Arraste para ajustar ou digite o valor"
+       # )
         
         # Botão de cálculo estilizado
         calcular = st.button("🎯 Calcular Posição", use_container_width=True)
